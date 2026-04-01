@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+local.db
+err_out.txt
+error.txt
+temp_check.py
+.system_generated/
+.gemini/

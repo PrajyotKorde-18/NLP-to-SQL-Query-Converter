@@ -1,0 +1,3 @@
+@echo off
+echo Starting Local Server using Database (root:root)...
+.venv\Scripts\python -m streamlit run app.py
