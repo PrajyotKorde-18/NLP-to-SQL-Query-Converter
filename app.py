@@ -1,5 +1,7 @@
 import os
 import streamlit as st
+import pandas as pd
+import plotly.express as px
 from dotenv import load_dotenv
 from langchain_community.utilities import SQLDatabase
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -101,112 +103,210 @@ with st.sidebar:
         st.error(f"Error communicating with DB: {e}")
         db = None
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Main Interface with Tabs
+tab1, tab2 = st.tabs(["💬 Chat Assistant", "📊 AI Data Analyst"])
 
-# Display chat messages
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+with tab1:
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-if prompt := st.chat_input("Ask a question about your database (e.g. How many products are there?)"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # Display chat messages
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    if not api_key:
-        st.error(f"Please enter your {provider} Key in the sidebar.")
-    elif db is None:
-        st.error("Database connection not ready.")
-    else:
-        with st.chat_message("assistant"):
-            with st.spinner("Executing agent..."):
-                current_keys = [k.strip() for k in api_key.split(",") if k.strip()]
-                success = False
-                
-                for i, key in enumerate(current_keys):
-                    try:
-                        # Use selected model with broad safety settings for free tier compatibility
-                        if provider == "Google Gemini":
-                            llm = ChatGoogleGenerativeAI(
-                                model=model_name, 
-                                api_key=key,
-                                safety_settings={
-                                    "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
-                                    "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
-                                    "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-                                    "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
-                                }
-                            )
-                        else:
-                            llm = ChatGroq(
-                                model_name=model_name,
-                                groq_api_key=key,
-                                temperature=0
-                            )
-                        
-                        # This toolkit provides Schema-Grounded generation
-                        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-                        
-                        # Dynamic System Prompt based on Write Access
-                        write_policy = "DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database."
-                        if allow_write:
-                            write_policy = "You are AUTHORED to fulfill CREATE, DROP, and DELETE requests for tables or databases if the user asks. Proceed with caution."
+    if prompt := st.chat_input("Ask a question about your database (e.g. How many products are there?)"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-                        sql_prefix = f"""You are a strict SQL Database agent. 
-You can interact with a SQL database using the provided tools.
-You are AUTHORED to fully manage the database including:
-- Creating new databases (CREATE DATABASE ...)
-- Creating tables (CREATE TABLE ...)
-- Inserting data (INSERT INTO ...)
-- Querying data (SELECT ...)
-
-{write_policy}
-
-IMPORTANT: 
-- ALWAYS look at the tables first using 'sql_db_list_tables'.
-- If the current connection is to the server (no specific database selected), you are free to create a new database.
-- You MUST only use the exact tool format provided. Do not use tags like <function> or invent your own syntax.
-- If you create a new database, notify the user that they should update the 'Database' field in the sidebar to work within it."""
-                        system_message = sql_prefix.format(dialect=db.dialect, top_k=5)
-                        
-                        # Create agent
-                        agent_executor = create_react_agent(llm, toolkit.get_tools(), prompt=system_message)
-                        
-                        events = agent_executor.stream(
-                            {"messages": [("user", prompt)]},
-                            stream_mode="values",
-                        )
-                        
-                        final_response = ""
-                        for event in events:
-                            msg = event["messages"][-1]
-                            if hasattr(msg, "content"):
-                                content = msg.content
-                                if isinstance(content, list):
-                                    final_response = "".join([str(p.get("text", "")) if isinstance(p, dict) else str(p) for p in content])
-                                else:
-                                    final_response = content
-                        
-                        if isinstance(final_response, str):
-                            st.markdown(final_response)
-                            st.session_state.messages.append({"role": "assistant", "content": final_response})
-                        else:
-                            st.write(final_response)
-                            st.session_state.messages.append({"role": "assistant", "content": str(final_response)})
-                        
-                        success = True
-                        break # Success! Exit key loop
-                        
-                    except Exception as e:
-                        # Log error for this key
-                        error_str = str(e)
-                        if "rate_limit" in error_str.lower() or "limit_reached" in error_str.lower() or "429" in error_str:
-                            if i < len(current_keys) - 1:
-                                st.warning(f"⚠️ API Key {i+1} reached rate limit. Switching to key {i+2}...")
-                                continue # Try next key
+        if not api_key:
+            st.error(f"Please enter your {provider} Key in the sidebar.")
+        elif db is None:
+            st.error("Database connection not ready.")
+        else:
+            with st.chat_message("assistant"):
+                with st.spinner("Executing agent..."):
+                    current_keys = [k.strip() for k in api_key.split(",") if k.strip()]
+                    success = False
+                    
+                    for i, key in enumerate(current_keys):
+                        try:
+                            # Use selected model with broad safety settings for free tier compatibility
+                            if provider == "Google Gemini":
+                                llm = ChatGoogleGenerativeAI(
+                                    model=model_name, 
+                                    api_key=key,
+                                    safety_settings={
+                                        "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+                                        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+                                        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+                                        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
+                                    }
+                                )
                             else:
-                                st.error(f"❌ All {len(current_keys)} API keys have reached their rate limits.")
+                                llm = ChatGroq(
+                                    model_name=model_name,
+                                    groq_api_key=key,
+                                    temperature=0
+                                )
+                            
+                            # This toolkit provides Schema-Grounded generation
+                            toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+                            
+                            # Dynamic System Prompt based on Write Access
+                            write_policy = "DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database."
+                            if allow_write:
+                                write_policy = "You are AUTHORED to fulfill CREATE, DROP, and DELETE requests for tables or databases if the user asks. Proceed with caution."
+
+                            sql_prefix = f"""You are a strict SQL Database agent. 
+    You can interact with a SQL database using the provided tools.
+    You are AUTHORED to fully manage the database including:
+    - Creating new databases (CREATE DATABASE ...)
+    - Creating tables (CREATE TABLE ...)
+    - Inserting data (INSERT INTO ...)
+    - Querying data (SELECT ...)
+
+    {write_policy}
+
+    IMPORTANT: 
+    - ALWAYS look at the tables first using 'sql_db_list_tables'.
+    - If the current connection is to the server (no specific database selected), you are free to create a new database.
+    - You MUST only use the exact tool format provided. Do not use tags like <function> or invent your own syntax.
+    - If you create a new database, notify the user that they should update the 'Database' field in the sidebar to work within it."""
+                            system_message = sql_prefix.format(dialect=db.dialect, top_k=5)
+                            
+                            # Create agent
+                            agent_executor = create_react_agent(llm, toolkit.get_tools(), prompt=system_message)
+                            
+                            events = agent_executor.stream(
+                                {"messages": [("user", prompt)]},
+                                stream_mode="values",
+                            )
+                            
+                            final_response = ""
+                            for event in events:
+                                msg = event["messages"][-1]
+                                if hasattr(msg, "content"):
+                                    content = msg.content
+                                    if isinstance(content, list):
+                                        final_response = "".join([str(p.get("text", "")) if isinstance(p, dict) else str(p) for p in content])
+                                    else:
+                                        final_response = content
+                            
+                            if isinstance(final_response, str):
+                                st.markdown(final_response)
+                                st.session_state.messages.append({"role": "assistant", "content": final_response})
+                            else:
+                                st.write(final_response)
+                                st.session_state.messages.append({"role": "assistant", "content": str(final_response)})
+                            
+                            success = True
+                            break # Success! Exit key loop
+                            
+                        except Exception as e:
+                            # Log error for this key
+                            error_str = str(e)
+                            if "rate_limit" in error_str.lower() or "limit_reached" in error_str.lower() or "429" in error_str:
+                                if i < len(current_keys) - 1:
+                                    st.warning(f"⚠️ API Key {i+1} reached rate limit. Switching to key {i+2}...")
+                                    continue # Try next key
+                                else:
+                                    st.error(f"❌ All {len(current_keys)} API keys have reached their rate limits.")
+                            else:
+                                st.error(f"Error: {e}")
+                                break # Non-rate-limit error, don't retry with other keys
+
+with tab2:
+    st.header("⚡ AI Data Analyst Dashboard")
+    st.markdown("Automated insights and visual trends from your database.")
+    
+    if db is None:
+        st.warning("Please connect to a database in the sidebar first.")
+    else:
+        tables = db.get_usable_table_names()
+        if not tables:
+            st.info("No tables found in this database yet.")
+        else:
+            selected_table = st.selectbox("Select Table to Analyze", tables)
+            
+            if selected_table:
+                with st.spinner(f"Fetching data from {selected_table}..."):
+                    try:
+                        # Fetch data using pandas
+                        query = f"SELECT * FROM `{selected_table}`"
+                        df = pd.read_sql(query, db._engine)
+                        
+                        if df.empty:
+                            st.info("The selected table is empty.")
                         else:
-                            st.error(f"Error: {e}")
-                            break # Non-rate-limit error, don't retry with other keys
+                            st.subheader("Data Preview")
+                            st.dataframe(df.head(10), use_container_width=True)
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.subheader("Data Summary")
+                                st.write(df.describe(include='all'))
+                            
+                            with col2:
+                                st.subheader("Quick Visualization")
+                                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                                if numeric_cols:
+                                    y_axis = st.selectbox("Select Metric (Y-axis)", numeric_cols)
+                                    x_axis = st.selectbox("Select Dimension (X-axis)", df.columns.tolist())
+                                    
+                                    chart_type = st.radio("Chart Type", ["Bar", "Line", "Scatter"], horizontal=True)
+                                    
+                                    if chart_type == "Bar":
+                                        fig = px.bar(df, x=x_axis, y=y_axis, template="plotly_dark", color_discrete_sequence=['#00d4ff'])
+                                    elif chart_type == "Line":
+                                        fig = px.line(df, x=x_axis, y=y_axis, template="plotly_dark", color_discrete_sequence=['#00d4ff'])
+                                    else:
+                                        fig = px.scatter(df, x=x_axis, y=y_axis, template="plotly_dark", color_discrete_sequence=['#00d4ff'])
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                                else:
+                                    st.info("No numeric columns found for visualization.")
+                            
+                            st.markdown("---")
+                            st.subheader("🤖 AI Analysis & Insights")
+                            
+                            if st.button("Generate Business Intelligence Report"):
+                                if not api_key:
+                                    st.error("Please enter your API key in the sidebar.")
+                                else:
+                                    with st.spinner("Analyzing data trends..."):
+                                        # Use standard LLM setup
+                                        key_to_use = api_key.split(",")[0].strip()
+                                        if provider == "Google Gemini":
+                                            analysis_llm = ChatGoogleGenerativeAI(model=model_name, api_key=key_to_use)
+                                        else:
+                                            analysis_llm = ChatGroq(model_name=model_name, groq_api_key=key_to_use)
+                                        
+                                        # Prepare a summary of the data for the LLM
+                                        data_summary = df.describe(include='all').to_string()
+                                        sample_data = df.head(5).to_string()
+                                        
+                                        analysis_prompt = f"""You are a professional Business Intelligence Analyst.
+                                        Analyze the following dataset from the table '{selected_table}'.
+                                        
+                                        DATA SUMMARY:
+                                        {data_summary}
+                                        
+                                        SAMPLE DATA:
+                                        {sample_data}
+                                        
+                                        Please provide:
+                                        1. A high-level overview of what this data represents.
+                                        2. 3-5 Key observations or trends you can see in the data summary.
+                                        3. Potential business recommendations or actions based on these trends.
+                                        4. Suggestions for deeper analysis.
+                                        
+                                        Format your response in a professional report style with markdown headers."""
+                                        
+                                        report = analysis_llm.invoke(analysis_prompt)
+                                        st.markdown(report.content)
+                                        
+                    except Exception as e:
+                        st.error(f"Error analyzing table: {e}")
