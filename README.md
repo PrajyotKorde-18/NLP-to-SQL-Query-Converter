@@ -62,7 +62,7 @@ NLP-to-SQL-Query-Converter/
 └── run.bat
 ```
 
-## What I learned
+<!--## What I learned-->
 
 <!-- TODO: 2 or 3 honest points, e.g. where the parsing broke on odd phrasing, how you handled ambiguous questions -->
 
